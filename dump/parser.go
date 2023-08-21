@@ -26,12 +26,14 @@ type ParseHandler interface {
 var binlogExp *regexp.Regexp
 var useExp *regexp.Regexp
 var valuesExp *regexp.Regexp
+var keyedValuesExp *regexp.Regexp
 var gtidExp *regexp.Regexp
 
 func init() {
 	binlogExp = regexp.MustCompile(`^CHANGE MASTER TO MASTER_LOG_FILE='(.+)', MASTER_LOG_POS=(\d+);`)
 	useExp = regexp.MustCompile("^USE `(.+)`;")
 	valuesExp = regexp.MustCompile("^INSERT INTO `(.+?)` VALUES \\((.+)\\);$")
+	keyedValuesExp = regexp.MustCompile("^INSERT INTO `(.+?)` \\((.+)\\) VALUES \\((.+)\\);$")
 	// The pattern will only match MySQL GTID, as you know SET GLOBAL gtid_slave_pos='0-1-4' is used for MariaDB.
 	// SET @@GLOBAL.GTID_PURGED='1638041a-0457-11e9-bb9f-00505690b730:1-429405150';
 	// https://dev.mysql.com/doc/refman/5.7/en/replication-gtids-concepts.html
@@ -93,6 +95,18 @@ func Parse(r io.Reader, h ParseHandler, parseBinlogPos bool) error {
 			table := m[0][1]
 
 			values, err := parseValues(m[0][2])
+			if err != nil {
+				return errors.Errorf("parse values %v err", line)
+			}
+
+			if err = h.Data(db, table, values); err != nil && err != ErrSkip {
+				return errors.Trace(err)
+			}
+		}
+
+		if m := keyedValuesExp.FindAllStringSubmatch(line, -1); len(m) == 1 {
+			table := m[0][1]
+			values, err := parseValues(m[0][3])
 			if err != nil {
 				return errors.Errorf("parse values %v err", line)
 			}
